@@ -102,10 +102,11 @@ BarWidget {
         id: button
         anchors.fill: parent
         bar: root.bar
-        // Icon-only when idle; percentage appended only while an actual
-        // print is running, since that's the one number worth seeing
-        // without opening the panel.
-        text: (root.status ? root.status.icon : "🖨️") +
+        // 🐙 stays fixed — a nod to OctoPrint's own "Tentacle logo"
+        // branding at octoprint.org — rather than swapping between
+        // per-state icons; only the completion % (while actually
+        // printing) and the active-color urgency change.
+        text: "🐙" +
               (root.status && root.status.printing && root.status.completion !== null
                   ? " " + Math.round(root.status.completion) + "%"
                   : "")

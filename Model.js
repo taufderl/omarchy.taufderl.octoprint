@@ -25,6 +25,12 @@ function normalizeHost(raw) {
     return s.replace(/\/+$/, "")
 }
 
+// Per-state icon for the small inline indicator next to the state text in
+// the panel body — NOT the widget's brand icon (that's the constant 🐙 in
+// BarWidget.qml/Panel.qml, a nod to OctoPrint's actual "Tentacle logo"
+// branding at octoprint.org, kept fixed rather than swapped per state —
+// the same "logo stays put, color/text conveys status" pattern used by
+// this shell's other bar widgets).
 var STATE_META = {
     "Printing": { icon: "🖨️", color: "#50fa7b" },
     "Paused": { icon: "⏸", color: "#ffb86c" },
@@ -109,7 +115,7 @@ function buildStatus(job, printer) {
 
     return {
         stateText: stateText,
-        icon: meta.icon,
+        statusIcon: meta.icon,
         color: meta.color,
         printing: !!flags.printing,
         paused: !!(flags.paused || flags.pausing),

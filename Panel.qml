@@ -94,7 +94,7 @@ Panel {
 
                     Text {
                         width: parent.width - refreshLabel.width - settingsLabel.width - Style.space(16)
-                        text: (root.status ? root.status.icon : "🖨️") + " OctoPrint"
+                        text: "🐙 OctoPrint"
                         color: root.barForeground
                         font.family: root.bar ? root.bar.fontFamily : Style.font.family
                         font.pixelSize: Style.font.subtitle
@@ -196,7 +196,7 @@ Panel {
 
                     Text {
                         width: parent.width
-                        text: root.status ? root.status.stateText : ""
+                        text: root.status ? root.status.statusIcon + " " + root.status.stateText : ""
                         color: root.status ? root.status.color : root.barForeground
                         font.pixelSize: 14
                         font.bold: true

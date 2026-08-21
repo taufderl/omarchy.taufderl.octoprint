@@ -8,6 +8,12 @@ Icon-only in the bar when idle; shows the completion percentage while a
 print is actually running. Click for the full panel: state, file name,
 progress bar, time remaining, and temperatures.
 
+The bar icon is 🐙 — a nod to OctoPrint's own "Tentacle logo" branding —
+kept fixed rather than swapped per print state; status is conveyed through
+color and the completion percentage instead. State-specific icons (🖨️
+printing, ⏸ paused, ⚠ error, 🔌 disconnected, 🛑 cancelling) show inline
+next to the state text inside the panel instead.
+
 ## Data source
 
 This plugin polls your own OctoPrint instance directly — no third-party
