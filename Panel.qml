@@ -229,9 +229,21 @@ Panel {
                 }
 
                 Column {
+                    id: statusColumn
                     visible: root.lastError.length === 0 && root.status !== null
                     width: parent.width
                     spacing: Style.space(6)
+
+                    // OctoPrint's /api/job keeps reporting the *previous*
+                    // job's completion/printTimeLeft even after it
+                    // finishes and the state moves back to "Operational" —
+                    // it doesn't clear that until a new file is loaded. So
+                    // this can't just check completion !== null, or the
+                    // progress bar and "100% · 0m left" line stay stuck
+                    // showing after a print is done.
+                    readonly property bool showProgress: root.status &&
+                        (root.status.printing || root.status.paused) &&
+                        root.status.completion !== null
 
                     Text {
                         width: parent.width
@@ -253,9 +265,10 @@ Panel {
                         elide: Text.ElideMiddle
                     }
 
-                    // Progress bar — only meaningful with an active job.
+                    // Progress bar — only while actually mid-print, not
+                    // just whenever completion happens to be non-null.
                     Item {
-                        visible: root.status && root.status.completion !== null
+                        visible: statusColumn.showProgress
                         width: parent.width
                         height: Style.space(8)
 
@@ -271,7 +284,7 @@ Panel {
                             anchors.top: parent.top
                             anchors.bottom: parent.bottom
                             radius: height / 2
-                            width: root.status && root.status.completion !== null
+                            width: statusColumn.showProgress
                                 ? parent.width * Math.max(0, Math.min(100, root.status.completion)) / 100
                                 : 0
                             color: root.status ? root.status.color : root.barForeground
@@ -279,7 +292,7 @@ Panel {
                     }
 
                     Text {
-                        visible: root.status && root.status.completion !== null
+                        visible: statusColumn.showProgress
                         text: root.status
                             ? Math.round(root.status.completion) + "%" +
                               (root.status.printTimeLeft !== null ? " · " + OctoModel.formatDuration(root.status.printTimeLeft) + " left" : "")
