@@ -54,7 +54,7 @@ screen), or directly in `~/.config/omarchy/shell.json` on the widget's
 
 | Setting | Description | Default |
 |---|---|---|
-| `host` | OctoPrint URL, e.g. `http://192.168.2.7` (no trailing slash) | *(required)* |
+| `host` | OctoPrint URL, e.g. `http://octopi.local` (no trailing slash) | *(required)* |
 | `apiKey` | OctoPrint API key | *(required)* |
 | `pollSeconds` | How often to re-poll (keep ≥ 5 — this is your own LAN device, not a rate-limited public API) | `15` |
 

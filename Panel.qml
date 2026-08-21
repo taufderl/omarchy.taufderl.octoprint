@@ -160,7 +160,7 @@ Panel {
                     TextField {
                         id: hostField
                         width: parent.width
-                        placeholderText: "http://192.168.2.7"
+                        placeholderText: "http://octopi.local"
                         onEditingFinished: root.commitHost(text)
                     }
 
