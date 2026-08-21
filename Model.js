@@ -10,9 +10,7 @@
 //   GET /api/printer — tool/bed temperatures, connection flags
 // Auth is a single "X-Api-Key" header (generated in OctoPrint's own
 // Settings → API). No CORS setup needed on the OctoPrint side — QML's
-// XMLHttpRequest doesn't enforce browser-style same-origin restrictions,
-// confirmed against two other unrelated cross-origin feeds while building
-// other Omarchy plugins.
+// XMLHttpRequest doesn't enforce browser-style same-origin restrictions.
 //
 // /api/printer returns 409 when the printer itself isn't connected (the
 // OctoPrint *server* can be up with no printer attached/powered — the
@@ -27,13 +25,10 @@ function normalizeHost(raw) {
 
 // Per-state icon for the small inline indicator next to the state text in
 // the panel body — NOT the widget's brand icon (that's the constant 🐙 in
-// BarWidget.qml/Panel.qml, a nod to OctoPrint's actual "Tentacle logo"
-// branding at octoprint.org, kept fixed rather than swapped per state —
-// the same "logo stays put, color/text conveys status" pattern used by
-// this shell's other bar widgets).
-// No dedicated 3D-printer glyph exists in Unicode, so this deliberately
-// avoids 🖨️ (a flat-paper printer — wrong device entirely) in favor of ⚙
-// for "actively doing something mechanical" states.
+// BarWidget.qml/Panel.qml, a nod to OctoPrint's own "Tentacle logo",
+// kept fixed rather than swapped per state). No dedicated 3D-printer
+// glyph exists in Unicode, so this uses ⚙ for "actively doing something
+// mechanical" states rather than the paper-printer 🖨️.
 var STATE_META = {
     "Printing": { icon: "⚙", color: "#50fa7b" },
     "Paused": { icon: "⏸", color: "#ffb86c" },
