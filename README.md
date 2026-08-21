@@ -10,8 +10,9 @@ progress bar, time remaining, and temperatures.
 
 The bar icon is 🐙 — a nod to OctoPrint's own "Tentacle logo" branding —
 kept fixed rather than swapped per print state; status is conveyed through
-color and the completion percentage instead. State-specific icons (🖨️
-printing, ⏸ paused, ⚠ error, 🔌 disconnected, 🛑 cancelling) show inline
+color and the completion percentage instead. State-specific icons (⚙
+printing, ✅ operational, ⏸ paused, ⚠ error, 🔌 disconnected, 🛑 cancelling)
+show inline
 next to the state text inside the panel instead.
 
 ## Data source

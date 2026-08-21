@@ -31,8 +31,11 @@ function normalizeHost(raw) {
 // branding at octoprint.org, kept fixed rather than swapped per state —
 // the same "logo stays put, color/text conveys status" pattern used by
 // this shell's other bar widgets).
+// No dedicated 3D-printer glyph exists in Unicode, so this deliberately
+// avoids 🖨️ (a flat-paper printer — wrong device entirely) in favor of ⚙
+// for "actively doing something mechanical" states.
 var STATE_META = {
-    "Printing": { icon: "🖨️", color: "#50fa7b" },
+    "Printing": { icon: "⚙", color: "#50fa7b" },
     "Paused": { icon: "⏸", color: "#ffb86c" },
     "Pausing": { icon: "⏸", color: "#ffb86c" },
     "Cancelling": { icon: "🛑", color: "#ff5555" },
@@ -40,11 +43,11 @@ var STATE_META = {
     "Offline": { icon: "🔌", color: "#6272a4" },
     "Offline after error": { icon: "⚠", color: "#ff5555" },
     "Opening serial connection": { icon: "🔌", color: "#8be9fd" },
-    "Operational": { icon: "🖨️", color: "#8be9fd" }
+    "Operational": { icon: "✅", color: "#8be9fd" }
 }
 
 function stateMeta(stateText) {
-    return STATE_META[stateText] || { icon: "🖨️", color: "#f8f8f2" }
+    return STATE_META[stateText] || { icon: "🐙", color: "#f8f8f2" }
 }
 
 function formatDuration(seconds) {
