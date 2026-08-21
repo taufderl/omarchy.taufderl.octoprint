@@ -112,11 +112,14 @@ BarWidget {
                   ? " " + Math.round(root.status.completion) + "%"
                   : "")
         active: !!(root.status && (root.status.printing || root.status.error))
+        // fileName/printTimeLeft gated on printing (not just presence) —
+        // OctoPrint keeps reporting the last job's data indefinitely once
+        // idle, not just while actually printing/paused.
         tooltipText: root.lastError
             ? root.lastError
             : (root.status
                 ? root.status.stateText +
-                  (root.status.fileName ? " · " + root.status.fileName : "") +
+                  ((root.status.printing || root.status.paused) && root.status.fileName ? " · " + root.status.fileName : "") +
                   (root.status.printing && root.status.printTimeLeft !== null
                       ? " · " + OctoModel.formatDuration(root.status.printTimeLeft) + " left"
                       : "")

@@ -255,7 +255,10 @@ Panel {
                     }
 
                     Text {
-                        visible: root.status && root.status.fileName !== ""
+                        // Same reasoning as showProgress below: OctoPrint
+                        // keeps reporting the last-printed file's name
+                        // indefinitely once idle, not just fileName !== "".
+                        visible: root.status && (root.status.printing || root.status.paused) && root.status.fileName !== ""
                         width: parent.width
                         text: root.status ? root.status.fileName : ""
                         color: root.barForeground
