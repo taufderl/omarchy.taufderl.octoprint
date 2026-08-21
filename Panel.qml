@@ -17,6 +17,7 @@ Panel {
     property string lastError: ""
     property string host: ""
     property string apiKey: ""
+    property int pollSeconds: 15
     property bool editingSettings: false
 
     signal refreshRequested()
@@ -33,14 +34,29 @@ Panel {
         root.editingSettings = !root.editingSettings
     }
 
-    // Merges `values` into the widget's current settings and writes the
-    // result back to shell.json — the same mechanism first-party plugins
-    // (clock, tailscale, ...) use for inline edits. Applied to the host
-    // widget immediately too, so the change is reflected without waiting
-    // for the shell.json round-trip.
+    // Writes the full settings object back to shell.json — the same
+    // mechanism first-party plugins (clock, tailscale, ...) use for inline
+    // edits. Applied to the host widget immediately too, so the change is
+    // reflected without waiting for the shell.json round-trip.
+    //
+    // Deliberately built from root.host/root.apiKey/root.pollSeconds (this
+    // plugin's own individually-tracked, reactively-bound properties) —
+    // NOT by copying whatever's currently in root.settings. The settings
+    // object is only as fresh as the shell's last injection into this
+    // widget; if that's ever transiently incomplete (e.g. mid-reload after
+    // `omarchy plugin update`), merging from it and writing the result back
+    // makes the loss permanent — reported as host/apiKey silently
+    // disappearing from shell.json after an update. The three tracked
+    // properties are each independently sourced via setting() in
+    // BarWidget.qml and self-correct on the next settings change, so
+    // reconstructing the entry from them can't lose a field this way.
     function persistSettings(values) {
-        var entry = { id: root.moduleName }
-        for (var existing in root.settings) if (existing !== "id") entry[existing] = root.settings[existing]
+        var entry = {
+            id: root.moduleName,
+            host: root.host,
+            apiKey: root.apiKey,
+            pollSeconds: root.pollSeconds
+        }
         for (var key in values) entry[key] = values[key]
 
         root.settings = entry
@@ -93,13 +109,36 @@ Panel {
                     spacing: Style.space(8)
 
                     Text {
-                        width: parent.width - refreshLabel.width - settingsLabel.width - Style.space(16)
+                        width: parent.width - refreshLabel.width - settingsLabel.width - Style.space(16) -
+                               (openLinkLabel.visible ? openLinkLabel.width + Style.space(8) : 0)
                         text: "🐙 OctoPrint"
                         color: root.barForeground
                         font.family: root.bar ? root.bar.fontFamily : Style.font.family
                         font.pixelSize: Style.font.subtitle
                         font.bold: true
                         wrapMode: Text.WordWrap
+                    }
+
+                    Text {
+                        id: openLinkLabel
+                        visible: root.host !== ""
+                        text: "🔗"
+                        color: root.barForeground
+                        opacity: 0.7
+                        font.pixelSize: Style.font.subtitle
+
+                        MouseArea {
+                            id: openLinkHover
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: Qt.openUrlExternally(root.host)
+                        }
+
+                        PanelToolTip {
+                            visible: openLinkHover.containsMouse
+                            text: "Open OctoPrint in browser"
+                        }
                     }
 
                     Text {

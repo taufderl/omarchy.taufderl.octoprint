@@ -52,6 +52,7 @@ BarWidget {
         panelLoader.item.lastError = Qt.binding(function() { return root.lastError })
         panelLoader.item.host = Qt.binding(function() { return root.host })
         panelLoader.item.apiKey = Qt.binding(function() { return root.apiKey })
+        panelLoader.item.pollSeconds = Qt.binding(function() { return root.pollSeconds })
     }
 
     function refresh() {
