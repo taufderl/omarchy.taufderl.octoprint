@@ -34,15 +34,20 @@ OctoPrint's normal, documented behavior for "server up, printer not
 attached/powered," not an error. The panel just shows less data (state only,
 no temperatures) rather than an error banner in that case.
 
-**Security note:** the API key is stored in plaintext in
-`~/.config/omarchy/shell.json`, like every other inline plugin setting in
-Omarchy — there's no secret-storage mechanism available to third-party
-plugins. Use a key scoped to this purpose if OctoPrint's user/key management
-supports it, same caution as any other locally-stored API key. The settings
-editor (⚙ in the panel) repeats this warning inline, along with a warning
-whenever the configured URL is plain `http://` rather than `https://` — the
-API key is sent in that request's headers on every poll, so plain HTTP means
-anyone on that network segment can read it. Configured host values are
+**Security note:** the host and API key are stored in plaintext at
+`~/.local/state/omarchy/taufderl.octoprint/settings.json`, `chmod 600`'d after
+every write (readable only by your user) — a dedicated file, not
+`~/.config/omarchy/shell.json`, so they don't end up mixed in with the rest
+of your bar config if you ever share or back that up. Omarchy still exposes
+no dedicated secret-storage mechanism to third-party plugins beyond that, so
+use a key scoped to this purpose if OctoPrint's user/key management supports
+it, same caution as any other locally-stored API key. (Upgrading from an
+older version that stored these in `shell.json`: they're migrated
+automatically on first load and removed from `shell.json` once moved.) The
+settings editor (⚙ in the panel) repeats this warning inline, along with a
+warning whenever the configured URL is plain `http://` rather than `https://`
+— the API key is sent in that request's headers on every poll, so plain HTTP
+means anyone on that network segment can read it. Configured host values are
 validated as a bare `http://`/`https://` origin (no embedded credentials,
 path, or query string) before use.
 
@@ -54,15 +59,20 @@ omarchy plugin add https://github.com/taufderl/omarchy.taufderl.octoprint.git --
 
 ## Configure
 
-Settings are edited through Setup → Plugins, or via the ⚙ in the panel
-(which additionally lets you type the API key without it staying visible on
-screen), or directly in `~/.config/omarchy/shell.json` on the widget's
-`bar.layout` entry:
+`host` and `apiKey` are set through the ⚙ in the panel only (which lets you
+type the API key without it staying visible on screen) — they're kept out of
+`~/.config/omarchy/shell.json` and Setup → Plugins' generic editor entirely,
+since they're credentials rather than ordinary bar-layout settings; see the
+Security note above for where they actually live.
+
+`pollSeconds` is an ordinary setting, editable through Setup → Plugins or
+directly in `~/.config/omarchy/shell.json` on the widget's `bar.layout`
+entry:
 
 | Setting | Description | Default |
 |---|---|---|
-| `host` | OctoPrint URL, e.g. `http://octopi.local` (no trailing slash) | *(required)* |
-| `apiKey` | OctoPrint API key | *(required)* |
+| `host` | OctoPrint URL, e.g. `http://octopi.local` (no trailing slash) — set via the panel's ⚙ | *(required)* |
+| `apiKey` | OctoPrint API key — set via the panel's ⚙ | *(required)* |
 | `pollSeconds` | How often to re-poll (minimum 10, comfortably above the request timeout) | `15` |
 
 Move it around the bar with:

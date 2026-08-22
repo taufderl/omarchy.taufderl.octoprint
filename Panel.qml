@@ -34,32 +34,13 @@ Panel {
         root.editingSettings = !root.editingSettings
     }
 
-    // Writes the full settings object back to shell.json — the same
-    // mechanism first-party plugins (clock, tailscale, ...) use for inline
-    // edits. Applied to the host widget immediately too, so the change is
-    // reflected without waiting for the shell.json round-trip.
-    //
-    // Built from root.host/root.apiKey/root.pollSeconds (this plugin's own
-    // individually-tracked, reactively-bound properties) rather than by
-    // copying whatever's currently in root.settings — that object is only
-    // as fresh as the shell's last injection into this widget, and merging
-    // from a transiently stale copy would write the gap back permanently.
-    // The three tracked properties are each independently sourced via
-    // setting() in BarWidget.qml and self-correct on the next settings
-    // change, so reconstructing the entry from them can't lose a field.
-    function persistSettings(values) {
-        var entry = {
-            id: root.moduleName,
-            host: root.host,
-            apiKey: root.apiKey,
-            pollSeconds: root.pollSeconds
-        }
-        for (var key in values) entry[key] = values[key]
-
-        root.settings = entry
-        if (root.hostWidget && "settings" in root.hostWidget) root.hostWidget.settings = entry
-        if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
-            root.bar.shell.updateEntryInline(root.moduleName, entry)
+    // host/apiKey are credentials, persisted by the host widget into its
+    // own state file (BarWidget.qml's persistCredentials()) — not written
+    // back to shell.json the way an ordinary inline setting would be. See
+    // BarWidget.qml for why.
+    function persistCredentials(values) {
+        if (!root.hostWidget || typeof root.hostWidget.persistCredentials !== "function") return
+        root.hostWidget.persistCredentials(values)
     }
 
     // An empty field clears the host (intentional). Non-empty input that
@@ -71,18 +52,18 @@ Panel {
     function commitHost(value) {
         var raw = String(value || "").trim()
         if (raw === "") {
-            if (root.host !== "") persistSettings({ host: "" })
+            if (root.host !== "") persistCredentials({ host: "" })
             return
         }
         var trimmed = OctoModel.normalizeHost(raw)
         if (trimmed === "" || trimmed === root.host) return
-        persistSettings({ host: trimmed })
+        persistCredentials({ host: trimmed })
     }
 
     function commitApiKey(value) {
         var trimmed = String(value || "").trim()
         if (trimmed === root.apiKey) return
-        persistSettings({ apiKey: trimmed })
+        persistCredentials({ apiKey: trimmed })
     }
 
     function switchPanel(direction) {
@@ -249,7 +230,7 @@ Panel {
 
                     Text {
                         width: parent.width
-                        text: "Stored in plaintext in shell.json — Omarchy exposes no secret-storage mechanism to third-party plugins. Use a scoped/revocable key."
+                        text: "Stored in plaintext at ~/.local/state/omarchy/taufderl.octoprint/settings.json (readable only by your user) — Omarchy exposes no secret-storage mechanism to third-party plugins. Use a scoped/revocable key."
                         color: root.barForeground
                         opacity: 0.5
                         font.pixelSize: 10

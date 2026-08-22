@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "taufderl.octoprint",
   "name": "OctoPrint",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "taufderl",
   "license": "MIT",
   "description": "Live 3D print job status — progress, temperatures, and time remaining — from a self-hosted OctoPrint instance.",
@@ -17,16 +17,6 @@
       "pollSeconds": 15
     },
     "schema": [
-      {
-        "key": "host",
-        "type": "string",
-        "label": "OctoPrint URL, e.g. \"http://octopi.local\" (no trailing slash)"
-      },
-      {
-        "key": "apiKey",
-        "type": "string",
-        "label": "OctoPrint API key (Settings → API in OctoPrint)"
-      },
       {
         "key": "pollSeconds",
         "type": "number",
