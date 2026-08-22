@@ -45,6 +45,18 @@ function stateMeta(stateText) {
     return STATE_META[stateText] || { icon: "🐙", color: "#f8f8f2" }
 }
 
+// job.state and job.job.file.name are OctoPrint-controlled (an attacker
+// with write access to the instance — or a MITM of an unencrypted
+// connection — can set either to an arbitrary string) and end up both in
+// this panel's own Text elements and in the bar's tooltip string, the
+// latter going through Omarchy's shared tooltip whose inner Text isn't
+// ours to set textFormat on. Stripping angle brackets here means neither
+// place can ever have a "<img src=...>"-style payload interpreted as
+// markup, no matter how it's ultimately rendered.
+function sanitizeField(v) {
+    return String(v === undefined || v === null ? "" : v).replace(/[<>]/g, "")
+}
+
 function formatDuration(seconds) {
     if (seconds === null || seconds === undefined || seconds < 0 || isNaN(seconds)) return ""
     var s = Math.round(seconds)
@@ -59,12 +71,19 @@ function formatTemp(v) {
     return v === null || v === undefined ? "--" : Math.round(v * 10) / 10 + "°"
 }
 
+// /api/job and /api/printer are small, fixed-shape JSON documents;
+// anything wildly past that is either a broken proxy or a hostile/
+// compromised endpoint, so this refuses to buffer/parse past a cap
+// regardless of what Content-Length (if any) claims.
+var MAX_RESPONSE_BYTES = 262144
+
 // One XHR against one endpoint, normalized to (data, errorMessage, status).
 // 409 is reported through the callback as a status, not thrown away, so
 // callers can distinguish "printer not connected" from a real failure.
 function getJson(url, apiKey, callback) {
     var xhr = new XMLHttpRequest()
     var settled = false
+    var aborted = false
     xhr.open("GET", url)
     xhr.setRequestHeader("X-Api-Key", apiKey)
     xhr.timeout = 8000
@@ -74,10 +93,26 @@ function getJson(url, apiKey, callback) {
         callback(null, "OctoPrint request timed out", 0)
     }
     xhr.onreadystatechange = function() {
+        if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED) {
+            var len = parseInt(xhr.getResponseHeader("Content-Length") || "0", 10)
+            if (len > MAX_RESPONSE_BYTES) {
+                aborted = true
+                xhr.abort()
+            }
+            return
+        }
         if (xhr.readyState !== XMLHttpRequest.DONE) return
         if (settled) return
         settled = true
+        if (aborted) {
+            callback(null, "OctoPrint response too large", 0)
+            return
+        }
         if (xhr.status === 200) {
+            if (xhr.responseText.length > MAX_RESPONSE_BYTES) {
+                callback(null, "OctoPrint response too large", xhr.status)
+                return
+            }
             try {
                 callback(JSON.parse(xhr.responseText), null, 200)
             } catch (e) {
@@ -112,13 +147,13 @@ function buildStatus(job, printer) {
     var bed = (printer && printer.temperature && printer.temperature.bed) || null
 
     return {
-        stateText: stateText,
+        stateText: sanitizeField(stateText),
         statusIcon: meta.icon,
         color: meta.color,
         printing: !!flags.printing,
         paused: !!(flags.paused || flags.pausing),
         error: !!(flags.error || flags.closedOrError),
-        fileName: file.name || "",
+        fileName: sanitizeField(file.name || ""),
         completion: (progress.completion === null || progress.completion === undefined) ? null : progress.completion,
         printTimeLeft: (progress.printTimeLeft === null || progress.printTimeLeft === undefined) ? null : progress.printTimeLeft,
         toolActual: tool0 ? tool0.actual : null,

@@ -245,6 +245,7 @@ Panel {
                     Text {
                         width: parent.width
                         text: root.status ? root.status.statusIcon + " " + root.status.stateText : ""
+                        textFormat: Text.PlainText
                         color: root.status ? root.status.color : root.barForeground
                         font.pixelSize: 14
                         font.bold: true
@@ -258,6 +259,7 @@ Panel {
                         visible: root.status && (root.status.printing || root.status.paused) && root.status.fileName !== ""
                         width: parent.width
                         text: root.status ? root.status.fileName : ""
+                        textFormat: Text.PlainText
                         color: root.barForeground
                         opacity: 0.8
                         font.pixelSize: 12
