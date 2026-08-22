@@ -18,9 +18,18 @@
 // as "not connected", not an error.
 // ---------------------------------------------------------------------
 
+// Restricts the configured host to a bare http(s) origin — scheme limited
+// to http/https, no embedded userinfo ("user:pass@..."), no path/query/
+// fragment beyond the origin. Anything else normalizes to "" (the same
+// "not configured" state fetchStatus() already handles), so a malformed
+// or hostile value can't reach either the authenticated XHR or the "open
+// in browser" link with an unexpected scheme or target — both now derive
+// from this single validated value instead of the raw setting.
+var HOST_ORIGIN_RE = /^https?:\/\/[^\s@\/?#]+$/i
+
 function normalizeHost(raw) {
-    var s = String(raw || "").trim()
-    return s.replace(/\/+$/, "")
+    var s = String(raw || "").trim().replace(/\/+$/, "")
+    return HOST_ORIGIN_RE.test(s) ? s : ""
 }
 
 // Per-state icon for the small inline indicator next to the state text in

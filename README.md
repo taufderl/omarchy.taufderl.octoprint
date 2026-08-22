@@ -38,7 +38,13 @@ no temperatures) rather than an error banner in that case.
 `~/.config/omarchy/shell.json`, like every other inline plugin setting in
 Omarchy — there's no secret-storage mechanism available to third-party
 plugins. Use a key scoped to this purpose if OctoPrint's user/key management
-supports it, same caution as any other locally-stored API key.
+supports it, same caution as any other locally-stored API key. The settings
+editor (⚙ in the panel) repeats this warning inline, along with a warning
+whenever the configured URL is plain `http://` rather than `https://` — the
+API key is sent in that request's headers on every poll, so plain HTTP means
+anyone on that network segment can read it. Configured host values are
+validated as a bare `http://`/`https://` origin (no embedded credentials,
+path, or query string) before use.
 
 ## Install
 
@@ -57,7 +63,7 @@ screen), or directly in `~/.config/omarchy/shell.json` on the widget's
 |---|---|---|
 | `host` | OctoPrint URL, e.g. `http://octopi.local` (no trailing slash) | *(required)* |
 | `apiKey` | OctoPrint API key | *(required)* |
-| `pollSeconds` | How often to re-poll (keep ≥ 5 — this is your own LAN device, not a rate-limited public API) | `15` |
+| `pollSeconds` | How often to re-poll (minimum 10, comfortably above the request timeout) | `15` |
 
 Move it around the bar with:
 

@@ -30,7 +30,12 @@
       {
         "key": "pollSeconds",
         "type": "number",
-        "label": "Poll interval (seconds)"
+        "label": "Poll interval (seconds)",
+        "description": "Keep this above the request timeout so polls don't overlap.",
+        "min": 10,
+        "max": 3600,
+        "step": 5,
+        "defaultValue": 15
       }
     ]
   }

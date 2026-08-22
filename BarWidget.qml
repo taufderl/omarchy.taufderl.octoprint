@@ -10,7 +10,12 @@ BarWidget {
     // Settings — the shell only ever assigns the whole `settings` object
     // (see Bar.qml's injectProps), never individual properties, so each
     // value has to be pulled out (and defaulted) via the base's setting().
-    readonly property string host: String(root.setting("host", ""))
+    // Re-validated here (not just at save time in Panel.qml's settings
+    // editor) so a value hand-edited directly into shell.json can't reach
+    // either the authenticated XHR or the "open in browser" link — both
+    // of which read this same property — with an unexpected scheme,
+    // embedded credentials, or path/query.
+    readonly property string host: OctoModel.normalizeHost(root.setting("host", ""))
     readonly property string apiKey: String(root.setting("apiKey", ""))
     readonly property int pollSeconds: Number(root.setting("pollSeconds", 15)) || 15
 
@@ -56,6 +61,7 @@ BarWidget {
     }
 
     function refresh() {
+        if (root.loading) return
         root.loading = true
         OctoModel.fetchStatus(root.host, root.apiKey, function(status, error) {
             root.loading = false
@@ -75,7 +81,11 @@ BarWidget {
     Component.onCompleted: root.refresh()
 
     Timer {
-        interval: Math.max(5, root.pollSeconds) * 1000
+        // 10s floor keeps this comfortably above getJson's 8s per-request
+        // timeout (Model.js) — refresh()'s own in-flight guard above is the
+        // real safeguard against overlap, this just avoids a low setting
+        // firing a timer that does nothing every few seconds.
+        interval: Math.max(10, root.pollSeconds) * 1000
         running: true
         repeat: true
         triggeredOnStart: false

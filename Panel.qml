@@ -62,9 +62,20 @@ Panel {
             root.bar.shell.updateEntryInline(root.moduleName, entry)
     }
 
+    // An empty field clears the host (intentional). Non-empty input that
+    // fails normalizeHost()'s validation is left uncommitted rather than
+    // persisted as-is — silently accepting it would just mean root.host
+    // (which re-validates on every read in BarWidget.qml) reads back as ""
+    // anyway, so persisting it would only look saved without doing
+    // anything.
     function commitHost(value) {
-        var trimmed = OctoModel.normalizeHost(value)
-        if (trimmed === root.host) return
+        var raw = String(value || "").trim()
+        if (raw === "") {
+            if (root.host !== "") persistSettings({ host: "" })
+            return
+        }
+        var trimmed = OctoModel.normalizeHost(raw)
+        if (trimmed === "" || trimmed === root.host) return
         persistSettings({ host: trimmed })
     }
 
@@ -201,6 +212,24 @@ Panel {
                     }
 
                     Text {
+                        visible: hostField.text !== "" && OctoModel.normalizeHost(hostField.text) === ""
+                        width: parent.width
+                        text: "Must be a plain http:// or https:// address — no credentials, path, or query string."
+                        color: "#ff5555"
+                        font.pixelSize: 10
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Text {
+                        visible: /^http:\/\//i.test(OctoModel.normalizeHost(hostField.text))
+                        width: parent.width
+                        text: "⚠ Plain HTTP sends the API key unencrypted — anyone on this network segment can read it. Use https:// if your OctoPrint instance supports it."
+                        color: "#ffb86c"
+                        font.pixelSize: 10
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Text {
                         text: "API key (Settings → API in OctoPrint)"
                         color: root.barForeground
                         opacity: 0.7
@@ -214,6 +243,15 @@ Panel {
                         placeholderText: "API key"
                         onEditingFinished: root.commitApiKey(text)
                     }
+
+                    Text {
+                        width: parent.width
+                        text: "Stored in plaintext in shell.json — Omarchy exposes no secret-storage mechanism to third-party plugins. Use a scoped/revocable key."
+                        color: root.barForeground
+                        opacity: 0.5
+                        font.pixelSize: 10
+                        wrapMode: Text.WordWrap
+                    }
                 }
 
                 Text {
@@ -222,6 +260,15 @@ Panel {
                     text: root.lastError
                     color: "#ff5555"
                     font.pixelSize: 11
+                    wrapMode: Text.WordWrap
+                }
+
+                Text {
+                    visible: /^http:\/\//i.test(root.host)
+                    width: parent.width
+                    text: "⚠ Connected over plain HTTP — the API key is sent unencrypted on this network segment."
+                    color: "#ffb86c"
+                    font.pixelSize: 10
                     wrapMode: Text.WordWrap
                 }
 
