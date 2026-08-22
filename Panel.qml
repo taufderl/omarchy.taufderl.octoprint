@@ -130,9 +130,10 @@ Panel {
                     Text {
                         id: openLinkLabel
                         visible: root.host !== ""
-                        text: "🔗"
+                        text: "󰏌"
                         color: root.barForeground
                         opacity: 0.7
+                        font.family: root.bar ? root.bar.fontFamily : Style.font.family
                         font.pixelSize: Style.font.subtitle
 
                         MouseArea {
@@ -151,9 +152,10 @@ Panel {
 
                     Text {
                         id: settingsLabel
-                        text: "⚙"
+                        text: "󰒓"
                         color: root.barForeground
                         opacity: root.editingSettings ? 1.0 : 0.6
+                        font.family: root.bar ? root.bar.fontFamily : Style.font.family
                         font.pixelSize: Style.font.subtitle
 
                         MouseArea {
@@ -165,8 +167,9 @@ Panel {
 
                     Text {
                         id: refreshLabel
-                        text: root.loading ? "⏳" : "⟳"
+                        text: root.loading ? "󰔟" : "󰑐"
                         color: root.barForeground
+                        font.family: root.bar ? root.bar.fontFamily : Style.font.family
                         font.pixelSize: Style.font.subtitle
 
                         MouseArea {
