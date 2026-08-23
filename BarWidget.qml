@@ -19,13 +19,14 @@ BarWidget {
     // don't come from shell.json at all. shell.json is the file people
     // paste into bug reports or sync as dotfiles; a plugin's own state dir
     // is not, so these live in a dedicated, plugin-owned file instead:
-    // ~/.local/state/omarchy/taufderl.octoprint/settings.json, chmod 600'd
-    // after every write (see persistCredentials() below). Still
+    // ~/.local/state/omarchy/taufderl.octoprint/settings.json, mode 600
+    // from the moment it's created (see writeCredentialsArgs() in
+    // Model.js, driven from persistCredentials() below). Still
     // re-validated on every load/persist (not just at save time in Panel.
     // qml's settings editor) so a hand-edited value in that file can't
-    // reach either the authenticated XHR or the "open in browser" link —
-    // both of which read this same property — with an unexpected scheme,
-    // embedded credentials, or path/query.
+    // reach either the authenticated curl request or the "open in
+    // browser" link — both of which read this same property — with an
+    // unexpected scheme, embedded credentials, or path/query.
     property string host: ""
     property string apiKey: ""
 
@@ -63,6 +64,19 @@ BarWidget {
         root.clearLegacyShellCredentials()
     }
 
+    // Kicks off the bounded read (see Model.js's readCredentialsArgs) once
+    // the state directory is confirmed to exist. Exit codes match what
+    // that script documents: 0 = read the (bounded, regular-file-only)
+    // content; 2 = stat failed, i.e. no credentials file yet, so this is
+    // either a fresh install or an upgrade that still needs migrating;
+    // anything else = the file exists but isn't safe to trust (too large,
+    // or not a regular file) — surface that rather than silently retrying
+    // or overwriting whatever is actually there.
+    function loadCredentials() {
+        credentialsReadProc.command = OctoModel.readCredentialsArgs(root.credentialsPath)
+        credentialsReadProc.running = true
+    }
+
     // First run after upgrading from the version that stored host/apiKey
     // in shell.json (or a fresh install using a still-cached old manifest
     // schema): the credentials file doesn't exist yet, so adopt whatever
@@ -83,11 +97,9 @@ BarWidget {
         for (var key in values) entry[key] = values[key]
         root.host = OctoModel.normalizeHost(String(entry.host || ""))
         root.apiKey = String(entry.apiKey || "")
-        credentialsFile.setText(JSON.stringify({ host: root.host, apiKey: root.apiKey }, null, 2) + "\n")
-        // The API key is a secret; keep the file readable only by the
-        // user. A short defer gives the atomic write above somewhere to
-        // land first.
-        Qt.callLater(function() { chmodProc.running = true })
+        var json = JSON.stringify({ host: root.host, apiKey: root.apiKey }, null, 2) + "\n"
+        credentialsWriteProc.command = OctoModel.writeCredentialsArgs(root.credentialsPath, json)
+        credentialsWriteProc.running = true
     }
 
     // Runs after every credentials load (fresh load or migration) and
@@ -143,14 +155,45 @@ BarWidget {
         panelLoader.item.pollSeconds = Qt.binding(function() { return root.pollSeconds })
     }
 
+    // Pre-flight checks fetchStatus() used to do before ever touching the
+    // network now live here, since starting the two curl Processes is a
+    // QML-side operation (see startFetch()/jobProc/printerProc below).
     function refresh() {
         if (root.loading) return
-        root.loading = true
-        OctoModel.fetchStatus(root.host, root.apiKey, function(status, error) {
+        if (root.host === "") {
             root.loading = false
-            root.lastError = error || ""
-            root.status = status
-        })
+            root.lastError = "No OctoPrint host configured"
+            root.status = null
+            return
+        }
+        if (root.apiKey.trim() === "") {
+            root.loading = false
+            root.lastError = "No OctoPrint API key configured"
+            root.status = null
+            return
+        }
+        root.loading = true
+        root.startFetch()
+    }
+
+    property var _jobResult: null
+    property var _printerResult: null
+
+    function startFetch() {
+        root._jobResult = null
+        root._printerResult = null
+        jobProc.command = OctoModel.curlArgs(root.host + "/api/job", root.apiKey)
+        printerProc.command = OctoModel.curlArgs(root.host + "/api/printer", root.apiKey)
+        jobProc.running = true
+        printerProc.running = true
+    }
+
+    function maybeFinishFetch() {
+        if (root._jobResult === null || root._printerResult === null) return
+        root.loading = false
+        var combined = OctoModel.combineResults(root._jobResult, root._printerResult)
+        root.lastError = combined.error || ""
+        root.status = combined.status
     }
 
     implicitWidth: button.implicitWidth
@@ -168,44 +211,85 @@ BarWidget {
     }
     onHostChanged: root.refresh()
     onApiKeyChanged: root.refresh()
+    onStateDirReadyChanged: if (root.stateDirReady) root.loadCredentials()
 
     Component.onCompleted: {
         mkdirProc.running = true
         root.refresh()
     }
 
-    // mkdir first, credentials file load only afterwards (path stays ""
-    // — FileView treats that as inactive — until stateDirReady flips) so
-    // a first-run migration write can never race the directory's own
-    // creation.
+    // install -d (unlike plain mkdir -p) applies its -m mode only to the
+    // named leaf directory — any missing parents (e.g. a not-yet-existing
+    // ~/.local/state/omarchy/) are created at the normal default mode, so
+    // this can't affect the shared parent other plugins' state dirs also
+    // live under. The credentials file this plugin writes below therefore
+    // sits inside an owner-only directory from before it's ever created,
+    // not just after a later chmod.
     Process {
         id: mkdirProc
-        command: ["mkdir", "-p", root.stateDir]
+        command: ["install", "-d", "-m", "700", "--", root.stateDir]
         onExited: root.stateDirReady = true
     }
 
+    property string _credentialsReadOutput: ""
+
+    // See Model.js's readCredentialsArgs()/writeCredentialsArgs() for why
+    // these run a small shell script instead of using Quickshell.Io's
+    // FileView: a bounded, type-checked read, and a write that's mode 600
+    // from creation rather than chmod'd afterward.
     Process {
-        id: chmodProc
-        command: ["chmod", "600", root.credentialsPath]
+        id: credentialsReadProc
+        command: []
+        stdout: StdioCollector {
+            id: credentialsReadStdout
+            waitForEnd: true
+            onStreamFinished: root._credentialsReadOutput = text
+        }
+        onExited: function(exitCode) {
+            if (exitCode === 0) {
+                root.loadCredentialsFromText(String(credentialsReadStdout.text || root._credentialsReadOutput || ""))
+            } else if (exitCode === 2) {
+                root.credentialsFileMissing = true
+                root.attemptMigrationIfNeeded()
+            } else {
+                root.credentialsLoaded = true
+                root.lastError = "OctoPrint credentials file looks invalid (~/.local/state/omarchy/taufderl.octoprint/settings.json) — not loading it"
+            }
+        }
     }
 
-    FileView {
-        id: credentialsFile
-        path: root.stateDirReady ? root.credentialsPath : ""
-        watchChanges: false
-        atomicWrites: true
-        printErrors: false
-        onLoaded: root.loadCredentialsFromText(text())
-        onLoadFailed: {
-            root.credentialsFileMissing = true
-            root.attemptMigrationIfNeeded()
+    Process {
+        id: credentialsWriteProc
+        command: []
+    }
+
+    property string _jobOutput: ""
+    property string _printerOutput: ""
+
+    Process {
+        id: jobProc
+        command: []
+        stdout: StdioCollector { id: jobStdout; waitForEnd: true; onStreamFinished: root._jobOutput = text }
+        onExited: function(exitCode) {
+            root._jobResult = OctoModel.interpretCurlExit(exitCode, String(jobStdout.text || root._jobOutput || ""))
+            root.maybeFinishFetch()
+        }
+    }
+
+    Process {
+        id: printerProc
+        command: []
+        stdout: StdioCollector { id: printerStdout; waitForEnd: true; onStreamFinished: root._printerOutput = text }
+        onExited: function(exitCode) {
+            root._printerResult = OctoModel.interpretCurlExit(exitCode, String(printerStdout.text || root._printerOutput || ""))
+            root.maybeFinishFetch()
         }
     }
 
     Timer {
-        // 10s floor keeps this comfortably above getJson's 8s per-request
-        // timeout (Model.js) — refresh()'s own in-flight guard above is the
-        // real safeguard against overlap, this just avoids a low setting
+        // 10s floor keeps this comfortably above curlArgs' 8s --max-time
+        // (Model.js) — refresh()'s own in-flight guard above is the real
+        // safeguard against overlap, this just avoids a low setting
         // firing a timer that does nothing every few seconds.
         interval: Math.max(10, root.pollSeconds) * 1000
         running: true

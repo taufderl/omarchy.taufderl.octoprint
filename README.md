@@ -51,6 +51,10 @@ means anyone on that network segment can read it. Configured host values are
 validated as a bare `http://`/`https://` origin (no embedded credentials,
 path, or query string) before use.
 
+## Requires
+
+- `curl` — fetches `/api/job` and `/api/printer`. Ships by default on Omarchy.
+
 ## Install
 
 ```sh

@@ -9,8 +9,9 @@
 //   GET /api/job     — job state text, progress %, time remaining, file name
 //   GET /api/printer — tool/bed temperatures, connection flags
 // Auth is a single "X-Api-Key" header (generated in OctoPrint's own
-// Settings → API). No CORS setup needed on the OctoPrint side — QML's
-// XMLHttpRequest doesn't enforce browser-style same-origin restrictions.
+// Settings → API). No CORS setup needed on the OctoPrint side — CORS is
+// a browser concept and requests here go through curl (see curlArgs()
+// below), not a browser-style client.
 //
 // /api/printer returns 409 when the printer itself isn't connected (the
 // OctoPrint *server* can be up with no printer attached/powered — the
@@ -86,58 +87,68 @@ function formatTemp(v) {
 // regardless of what Content-Length (if any) claims.
 var MAX_RESPONSE_BYTES = 262144
 
-// One XHR against one endpoint, normalized to (data, errorMessage, status).
-// 409 is reported through the callback as a status, not thrown away, so
-// callers can distinguish "printer not connected" from a real failure.
-function getJson(url, apiKey, callback) {
-    var xhr = new XMLHttpRequest()
-    var settled = false
-    var aborted = false
-    xhr.open("GET", url)
-    xhr.setRequestHeader("X-Api-Key", apiKey)
-    xhr.timeout = 8000
-    xhr.ontimeout = function() {
-        if (settled) return
-        settled = true
-        callback(null, "OctoPrint request timed out", 0)
+// QML's own XMLHttpRequest has no way to abort mid-download: even with a
+// Content-Length pre-check, a chunked (or falsely-labeled) response is
+// still fully materialized into responseText before onreadystatechange
+// ever reaches DONE, so a check made there runs after the damage is
+// already done. curl's --max-filesize genuinely aborts the transfer
+// itself once the byte count is exceeded, Content-Length or not — so
+// requests go through a curl subprocess (via a QML Process — see
+// BarWidget.qml) instead. Since callers need the real HTTP status (401/
+// 403/409 are all meaningful, not just "it worked or it didn't"), -f
+// isn't used; the status is appended to stdout instead and split off
+// here.
+var STATUS_SENTINEL = "\n@@OMARCHY_HTTP_STATUS@@"
+
+function curlArgs(url, apiKey) {
+    return ["curl", "-sS",
+        "--proto", "=http,https", "--proto-redir", "=http,https",
+        "--max-filesize", String(MAX_RESPONSE_BYTES),
+        "--max-time", "8",
+        "-H", "X-Api-Key: " + apiKey,
+        "-w", STATUS_SENTINEL + "%{http_code}",
+        "--", url]
+}
+
+// Turns one curl Process's (exitCode, stdout) into the same
+// {data|error, status} shape getJson()'s XHR callback used to produce.
+// 409 is returned as a status, not thrown away, so callers can
+// distinguish "printer not connected" from a real failure.
+function interpretCurlExit(exitCode, rawOutput) {
+    if (exitCode === 63) return { data: null, error: "OctoPrint response too large", status: 0 }
+    if (exitCode === 28) return { data: null, error: "OctoPrint request timed out", status: 0 }
+    if (exitCode !== 0) return { data: null, error: "Could not reach OctoPrint", status: 0 }
+
+    var idx = rawOutput.lastIndexOf(STATUS_SENTINEL)
+    if (idx === -1) return { data: null, error: "Failed to parse OctoPrint response", status: 0 }
+    var status = parseInt(rawOutput.slice(idx + STATUS_SENTINEL.length), 10) || 0
+    var body = rawOutput.slice(0, idx)
+
+    if (status === 200) {
+        if (body.length > MAX_RESPONSE_BYTES) return { data: null, error: "OctoPrint response too large", status: status }
+        try {
+            return { data: JSON.parse(body), error: null, status: 200 }
+        } catch (e) {
+            return { data: null, error: "Failed to parse OctoPrint response", status: status }
+        }
+    } else if (status === 401 || status === 403) {
+        return { data: null, error: "OctoPrint rejected the API key", status: status }
+    } else if (status === 409) {
+        return { data: null, error: "Printer not connected", status: 409 }
+    } else {
+        return { data: null, error: "OctoPrint error (" + status + ")", status: status }
     }
-    xhr.onreadystatechange = function() {
-        if (xhr.readyState === XMLHttpRequest.HEADERS_RECEIVED) {
-            var len = parseInt(xhr.getResponseHeader("Content-Length") || "0", 10)
-            if (len > MAX_RESPONSE_BYTES) {
-                aborted = true
-                xhr.abort()
-            }
-            return
-        }
-        if (xhr.readyState !== XMLHttpRequest.DONE) return
-        if (settled) return
-        settled = true
-        if (aborted) {
-            callback(null, "OctoPrint response too large", 0)
-            return
-        }
-        if (xhr.status === 200) {
-            if (xhr.responseText.length > MAX_RESPONSE_BYTES) {
-                callback(null, "OctoPrint response too large", xhr.status)
-                return
-            }
-            try {
-                callback(JSON.parse(xhr.responseText), null, 200)
-            } catch (e) {
-                callback(null, "Failed to parse OctoPrint response", xhr.status)
-            }
-        } else if (xhr.status === 401 || xhr.status === 403) {
-            callback(null, "OctoPrint rejected the API key", xhr.status)
-        } else if (xhr.status === 409) {
-            callback(null, "Printer not connected", 409)
-        } else if (xhr.status === 0) {
-            callback(null, "Could not reach OctoPrint", 0)
-        } else {
-            callback(null, "OctoPrint error (" + xhr.status + ")", xhr.status)
-        }
-    }
-    xhr.send()
+}
+
+// Combines the /api/job + /api/printer curl results the same way
+// fetchStatus() used to combine its two XHR callbacks: a 409 from either
+// endpoint (printer not connected) is not fatal on its own.
+function combineResults(jobResult, printerResult) {
+    var fatalError = null
+    if (jobResult.error && jobResult.status !== 409) fatalError = jobResult.error
+    if (printerResult.error && printerResult.status !== 409) fatalError = fatalError || printerResult.error
+    if (fatalError) return { status: null, error: fatalError }
+    return { status: buildStatus(jobResult.data, printerResult.data), error: null }
 }
 
 // Combines /api/job + /api/printer into one status object. A 409 from
@@ -172,49 +183,53 @@ function buildStatus(job, printer) {
     }
 }
 
-function fetchStatus(host, apiKey, callback) {
-    var base = normalizeHost(host)
-    if (base === "") {
-        callback(null, "No OctoPrint host configured")
-        return
-    }
-    if (String(apiKey || "").trim() === "") {
-        callback(null, "No OctoPrint API key configured")
-        return
-    }
+// ---------------------------------------------------------------------
+// Credentials file — ~/.local/state/omarchy/taufderl.octoprint/settings.json
+//
+// Read and write both go through a QML Process (see BarWidget.qml)
+// running one of these small, argv-safe shell scripts rather than
+// Quickshell.Io's FileView, for two reasons a FileView bound directly to
+// the path can't address:
+//
+// - Read: FileView.text() materializes the whole file unconditionally.
+//   This is a plugin-owned file under a directory only this plugin
+//   writes to, but if it were ever replaced by something huge or a
+//   non-regular special file (FIFO, device), a plain read would happily
+//   buffer all of it or block on it. The read script stats the path
+//   first and only execs `head -c <limit>` once it's confirmed to be a
+//   regular file within bounds.
+// - Write: FileView.setText() + a chmod 600 afterward (the previous
+//   approach) leaves a real window where the just-written file exists at
+//   whatever the default umask produces before the deferred chmod lands.
+//   The write script sets `umask 077` before ever creating the temp
+//   file, so it's mode 600 from its very first byte — the atomic rename
+//   onto the final path carries that same mode with it, so there's no
+//   separate chmod step left to race at all.
+//
+// Both pass the path (and, for writes, the JSON content) as their own
+// argv element rather than interpolating them into the script text, so
+// arbitrary bytes in either — quotes, `$()`, backticks, newlines — can
+// never be read as shell syntax.
+// ---------------------------------------------------------------------
 
-    var jobData = null
-    var printerData = null
-    var pending = 2
-    var settled = false
-    var fatalError = null
+var MAX_CREDENTIALS_BYTES = 16384
 
-    function finish() {
-        pending--
-        if (pending > 0 || settled) return
-        settled = true
-        if (fatalError) {
-            callback(null, fatalError)
-            return
-        }
-        callback(buildStatus(jobData, printerData), null)
-    }
+function readCredentialsArgs(path) {
+    return ["sh", "-c",
+        'info=$(stat -c "%s %F" -- "$1" 2>/dev/null) || exit 2\n' +
+        'sz=${info%% *}\n' +
+        'type=${info#* }\n' +
+        '[ "$type" = "regular file" ] || exit 4\n' +
+        '[ "$sz" -le "$2" ] || exit 4\n' +
+        'exec head -c "$2" -- "$1"\n',
+        "sh", path, String(MAX_CREDENTIALS_BYTES)]
+}
 
-    getJson(base + "/api/job", apiKey, function(data, err, status) {
-        if (err) {
-            if (status !== 409) fatalError = err
-        } else {
-            jobData = data
-        }
-        finish()
-    })
-
-    getJson(base + "/api/printer", apiKey, function(data, err, status) {
-        if (err) {
-            if (status !== 409) fatalError = err
-        } else {
-            printerData = data
-        }
-        finish()
-    })
+function writeCredentialsArgs(path, jsonText) {
+    return ["sh", "-c",
+        'umask 077\n' +
+        'tmp="$1.tmp.$$"\n' +
+        'printf %s "$2" > "$tmp" || { rm -f -- "$tmp"; exit 1; }\n' +
+        'mv -f -- "$tmp" "$1"\n',
+        "sh", path, jsonText]
 }
