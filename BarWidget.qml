@@ -178,14 +178,22 @@ BarWidget {
 
     property var _jobResult: null
     property var _printerResult: null
+    property int _fetchSeq: 0
+    property string _apiKeyConfigPath: ""
 
+    // The API key never touches curl's argv (see Model.js's curlArgs()) —
+    // it's written to a one-time-use --config file first, both requests
+    // read it from there, and it's deleted once both have finished (see
+    // maybeFinishFetch()). _fetchSeq makes each cycle's path unique, so a
+    // slow cleanup from a previous cycle can never race a fresh write for
+    // this one.
     function startFetch() {
         root._jobResult = null
         root._printerResult = null
-        jobProc.command = OctoModel.curlArgs(root.host + "/api/job", root.apiKey)
-        printerProc.command = OctoModel.curlArgs(root.host + "/api/printer", root.apiKey)
-        jobProc.running = true
-        printerProc.running = true
+        root._fetchSeq++
+        root._apiKeyConfigPath = root.stateDir + "/apikey." + root._fetchSeq + ".curlconf"
+        apiKeyConfigWriteProc.command = OctoModel.writeApiKeyConfigArgs(root._apiKeyConfigPath, root.apiKey)
+        apiKeyConfigWriteProc.running = true
     }
 
     function maybeFinishFetch() {
@@ -194,6 +202,8 @@ BarWidget {
         var combined = OctoModel.combineResults(root._jobResult, root._printerResult)
         root.lastError = combined.error || ""
         root.status = combined.status
+        apiKeyConfigRemoveProc.command = OctoModel.removeApiKeyConfigArgs(root._apiKeyConfigPath)
+        apiKeyConfigRemoveProc.running = true
     }
 
     implicitWidth: button.implicitWidth
@@ -228,7 +238,20 @@ BarWidget {
     Process {
         id: mkdirProc
         command: ["install", "-d", "-m", "700", "--", root.stateDir]
-        onExited: root.stateDirReady = true
+        onExited: {
+            root.stateDirReady = true
+            // Best-effort: clears out an apikey.*.curlconf a previous run
+            // left behind by ending mid-fetch (crash, forced restart) —
+            // the normal path already removes its own file once both
+            // requests using it finish (see maybeFinishFetch()).
+            cleanupStaleApiKeyConfigsProc.command = OctoModel.cleanupStaleApiKeyConfigsArgs(root.stateDir)
+            cleanupStaleApiKeyConfigsProc.running = true
+        }
+    }
+
+    Process {
+        id: cleanupStaleApiKeyConfigsProc
+        command: []
     }
 
     property string _credentialsReadOutput: ""
@@ -260,6 +283,32 @@ BarWidget {
 
     Process {
         id: credentialsWriteProc
+        command: []
+    }
+
+    // Writes the per-cycle --config file (see startFetch()), then kicks
+    // off both curl requests once it's actually landed on disk — mode
+    // 600, so no window where it's readable by anyone but this user.
+    Process {
+        id: apiKeyConfigWriteProc
+        command: []
+        onExited: function(exitCode) {
+            if (exitCode !== 0) {
+                root.loading = false
+                root.lastError = "Could not prepare the OctoPrint request"
+                apiKeyConfigRemoveProc.command = OctoModel.removeApiKeyConfigArgs(root._apiKeyConfigPath)
+                apiKeyConfigRemoveProc.running = true
+                return
+            }
+            jobProc.command = OctoModel.curlArgs(root.host + "/api/job", root._apiKeyConfigPath)
+            printerProc.command = OctoModel.curlArgs(root.host + "/api/printer", root._apiKeyConfigPath)
+            jobProc.running = true
+            printerProc.running = true
+        }
+    }
+
+    Process {
+        id: apiKeyConfigRemoveProc
         command: []
     }
 

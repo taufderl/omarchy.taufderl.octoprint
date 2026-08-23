@@ -100,12 +100,49 @@ var MAX_RESPONSE_BYTES = 262144
 // here.
 var STATUS_SENTINEL = "\n@@OMARCHY_HTTP_STATUS@@"
 
-function curlArgs(url, apiKey) {
+// The API key is NOT passed via -H: curl puts every argv element
+// (headers included) into the process's own command line, which any
+// same-UID process can read for the process's whole lifetime via
+// /proc/<pid>/cmdline or `ps` — confirmed locally, and exactly what
+// moving the key out of shell.json was meant to avoid. curl reads the
+// header from a --config file instead, which never appears in its argv.
+// See writeApiKeyConfigArgs()/removeApiKeyConfigArgs() below for how
+// that file itself is created (mode 600, inside the already-700 state
+// directory, one-time-use path per fetch) and cleaned up.
+function apiKeyConfigLine(apiKey) {
+    var escaped = String(apiKey).replace(/\\/g, "\\\\").replace(/"/g, "\\\"")
+    return "header = \"X-Api-Key: " + escaped + "\"\n"
+}
+
+function writeApiKeyConfigArgs(path, apiKey) {
+    return ["sh", "-c",
+        'umask 077\n' +
+        'tmp="$1.tmp.$$"\n' +
+        'printf %s "$2" > "$tmp" || { rm -f -- "$tmp"; exit 1; }\n' +
+        'mv -f -- "$tmp" "$1"\n',
+        "sh", path, apiKeyConfigLine(apiKey)]
+}
+
+function removeApiKeyConfigArgs(path) {
+    return ["rm", "-f", "--", path]
+}
+
+// Cleans up any apikey.*.curlconf left behind by a session that ended
+// mid-fetch (crash, forced shell restart) — the normal path already
+// removes its own file once both requests that used it finish (see
+// maybeFinishFetch() in BarWidget.qml), this is only for that abnormal
+// case. Safe to run unconditionally: matches only this plugin's own
+// naming pattern, inside its own state directory.
+function cleanupStaleApiKeyConfigsArgs(stateDir) {
+    return ["sh", "-c", 'rm -f -- "$1"/apikey.*.curlconf', "sh", stateDir]
+}
+
+function curlArgs(url, apiKeyConfigPath) {
     return ["curl", "-sS",
         "--proto", "=http,https", "--proto-redir", "=http,https",
         "--max-filesize", String(MAX_RESPONSE_BYTES),
         "--max-time", "8",
-        "-H", "X-Api-Key: " + apiKey,
+        "--config", apiKeyConfigPath,
         "-w", STATUS_SENTINEL + "%{http_code}",
         "--", url]
 }
