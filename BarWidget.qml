@@ -35,6 +35,7 @@ BarWidget {
     readonly property string credentialsPath: stateDir + "/settings.json"
     property bool stateDirReady: false
     property bool credentialsLoaded: false
+    property string _pendingCredentialsJson: ""
 
     // Migration (see migrateCredentialsFromShellSettings() below) needs to
     // read root.setting("host"/"apiKey") — but `settings` itself arrives
@@ -98,7 +99,10 @@ BarWidget {
         root.host = OctoModel.normalizeHost(String(entry.host || ""))
         root.apiKey = String(entry.apiKey || "")
         var json = JSON.stringify({ host: root.host, apiKey: root.apiKey }, null, 2) + "\n"
-        credentialsWriteProc.command = OctoModel.writeCredentialsArgs(root.credentialsPath, json)
+        // json (carries apiKey) goes over stdin, not argv — see
+        // Model.js's writeCredentialsArgs() doc comment.
+        root._pendingCredentialsJson = json
+        credentialsWriteProc.command = OctoModel.writeCredentialsArgs(root.credentialsPath)
         credentialsWriteProc.running = true
     }
 
@@ -180,6 +184,7 @@ BarWidget {
     property var _printerResult: null
     property int _fetchSeq: 0
     property string _apiKeyConfigPath: ""
+    property string _pendingApiKeyConfigLine: ""
 
     // The API key never touches curl's argv (see Model.js's curlArgs()) —
     // it's written to a one-time-use --config file first, both requests
@@ -192,7 +197,10 @@ BarWidget {
         root._printerResult = null
         root._fetchSeq++
         root._apiKeyConfigPath = root.stateDir + "/apikey." + root._fetchSeq + ".curlconf"
-        apiKeyConfigWriteProc.command = OctoModel.writeApiKeyConfigArgs(root._apiKeyConfigPath, root.apiKey)
+        // The config line (carries apiKey) goes over stdin, not argv —
+        // see Model.js's writeApiKeyConfigArgs() doc comment.
+        root._pendingApiKeyConfigLine = OctoModel.apiKeyConfigLine(root.apiKey)
+        apiKeyConfigWriteProc.command = OctoModel.writeApiKeyConfigArgs(root._apiKeyConfigPath)
         apiKeyConfigWriteProc.running = true
     }
 
@@ -281,17 +289,44 @@ BarWidget {
         }
     }
 
+    // apiKey (inside the JSON) is delivered over stdin rather than argv —
+    // write() only does anything once the process is actually running
+    // (this->process is set), hence doing it from onRunningChanged rather
+    // than right after setting `running = true`. Clearing stdinEnabled
+    // closes the write channel, which is this script's only EOF signal
+    // for `cat` to stop reading and move on to the rename.
     Process {
         id: credentialsWriteProc
         command: []
+        stdinEnabled: true
+        onRunningChanged: {
+            if (running) {
+                write(root._pendingCredentialsJson)
+                stdinEnabled = false
+            } else {
+                stdinEnabled = true
+            }
+        }
     }
 
     // Writes the per-cycle --config file (see startFetch()), then kicks
     // off both curl requests once it's actually landed on disk — mode
     // 600, so no window where it's readable by anyone but this user.
+    // apiKey is delivered over stdin rather than argv — see
+    // credentialsWriteProc above for why write() happens in
+    // onRunningChanged and stdinEnabled is reset in the `else` branch.
     Process {
         id: apiKeyConfigWriteProc
         command: []
+        stdinEnabled: true
+        onRunningChanged: {
+            if (running) {
+                write(root._pendingApiKeyConfigLine)
+                stdinEnabled = false
+            } else {
+                stdinEnabled = true
+            }
+        }
         onExited: function(exitCode) {
             if (exitCode !== 0) {
                 root.loading = false

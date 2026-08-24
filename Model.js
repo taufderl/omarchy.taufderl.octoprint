@@ -106,6 +106,11 @@ var STATUS_SENTINEL = "\n@@OMARCHY_HTTP_STATUS@@"
 // /proc/<pid>/cmdline or `ps` — confirmed locally, and exactly what
 // moving the key out of shell.json was meant to avoid. curl reads the
 // header from a --config file instead, which never appears in its argv.
+// That config file's own content — built here — carries the key, so it
+// goes to disk over stdin (see writeApiKeyConfigArgs() below and its
+// caller in BarWidget.qml), not as an argv element either: the same
+// /proc/<pid>/cmdline exposure applies to the *writing* process just as
+// much as it would to curl.
 // See writeApiKeyConfigArgs()/removeApiKeyConfigArgs() below for how
 // that file itself is created (mode 600, inside the already-700 state
 // directory, one-time-use path per fetch) and cleaned up.
@@ -114,13 +119,20 @@ function apiKeyConfigLine(apiKey) {
     return "header = \"X-Api-Key: " + escaped + "\"\n"
 }
 
-function writeApiKeyConfigArgs(path, apiKey) {
+// Content comes in over stdin (the caller writes it via Process.write()
+// after starting this, then disables stdinEnabled to signal EOF — see
+// BarWidget.qml) rather than as an argv element, and lands via `mktemp`
+// (atomically created, exclusive, mode 600 from the instant it exists)
+// instead of a "$path.tmp.$$" name a local attacker could pre-place a
+// symlink at, guessing the shell's own pid.
+function writeApiKeyConfigArgs(path) {
     return ["sh", "-c",
         'umask 077\n' +
-        'tmp="$1.tmp.$$"\n' +
-        'printf %s "$2" > "$tmp" || { rm -f -- "$tmp"; exit 1; }\n' +
+        'dir=$(dirname -- "$1") || exit 1\n' +
+        'tmp=$(mktemp -- "$dir/.apikey.XXXXXX") || exit 1\n' +
+        'cat > "$tmp" || { rm -f -- "$tmp"; exit 1; }\n' +
         'mv -f -- "$tmp" "$1"\n',
-        "sh", path, apiKeyConfigLine(apiKey)]
+        "sh", path]
 }
 
 function removeApiKeyConfigArgs(path) {
@@ -232,41 +244,79 @@ function buildStatus(job, printer) {
 //   This is a plugin-owned file under a directory only this plugin
 //   writes to, but if it were ever replaced by something huge or a
 //   non-regular special file (FIFO, device), a plain read would happily
-//   buffer all of it or block on it. The read script stats the path
-//   first and only execs `head -c <limit>` once it's confirmed to be a
-//   regular file within bounds.
-// - Write: FileView.setText() + a chmod 600 afterward (the previous
+//   buffer all of it or block on it. The read script opens the path
+//   exactly once (`exec 3<`) and stats *that file descriptor* (via
+//   /proc/self/fd/3, not the path again) before reading from it — a
+//   second stat-by-path, or a stat-then-reopen, would leave a window
+//   where the path could be swapped (symlink, replaced file) between the
+//   check and the read; stating the already-open fd can't be fooled that
+//   way, since it's pinned to whatever was actually opened.
+// - Write: FileView.setText() + a chmod 600 afterward (an earlier
 //   approach) leaves a real window where the just-written file exists at
 //   whatever the default umask produces before the deferred chmod lands.
-//   The write script sets `umask 077` before ever creating the temp
-//   file, so it's mode 600 from its very first byte — the atomic rename
-//   onto the final path carries that same mode with it, so there's no
-//   separate chmod step left to race at all.
+//   The write script sets `umask 077` before creating anything, and uses
+//   `mktemp` for the temp file — atomically created with an
+//   unpredictable name and mode 600 from the instant it exists, unlike a
+//   "$path.tmp.$$" name (the shell's own pid, guessable) that a local
+//   attacker could pre-place a symlink at. The atomic rename onto the
+//   final path carries that same mode with it, so there's no separate
+//   chmod step left to race either.
 //
-// Both pass the path (and, for writes, the JSON content) as their own
-// argv element rather than interpolating them into the script text, so
-// arbitrary bytes in either — quotes, `$()`, backticks, newlines — can
-// never be read as shell syntax.
+// The path is its own argv element rather than interpolated into the
+// script text, so arbitrary bytes in it — quotes, `$()`, backticks,
+// newlines — can never be read as shell syntax. The secret content
+// (JSON for the credentials file, the header line for the curl --config
+// file) is never an argv element at all: argv is visible to any
+// same-UID process for the writing process's whole lifetime via
+// /proc/<pid>/cmdline or `ps`. It's delivered over stdin instead —
+// callers write it via Process.write() after starting the write, then
+// set stdinEnabled = false to signal EOF (see BarWidget.qml).
 // ---------------------------------------------------------------------
 
 var MAX_CREDENTIALS_BYTES = 16384
 
 function readCredentialsArgs(path) {
     return ["sh", "-c",
-        'info=$(stat -c "%s %F" -- "$1" 2>/dev/null) || exit 2\n' +
+        // "--" isn't valid before a bare redirection target (only
+        // before a *command's* arguments, which is why the mktemp/mv/
+        // dirname calls elsewhere in this file still use it) — a
+        // leading "-" in $1 just can't reach `<` as an option in the
+        // first place, so plain `< "$1"` is already unambiguous.
+        //
+        // The existence check up front isn't for the TOCTOU concern
+        // (that's what the fd-based stat below is for) — it's because
+        // `exec`, run with only a redirection and no command, is a
+        // POSIX "special built-in": a redirection error on it aborts
+        // the whole (non-interactive) shell immediately, bypassing any
+        // `|| exit 2` on the same line entirely. Checking first means
+        // the ordinary "no credentials file yet" case never reaches
+        // that exec at all; the fresh-install path depends on this
+        // exiting 2, not on the shell dying with some other status.
+        //
+        // `stat -L` (not plain `stat`) on /proc/self/fd/3 matters: bare
+        // `stat` lstat()s the fd symlink itself ("64 symbolic link" —
+        // the length of the pseudo-target string), not the file fd 3
+        // actually has open. `-L` dereferences it, which for a magic
+        // /proc/self/fd link reports the live open file's real
+        // metadata — pinned to the fd, so a path swap after this
+        // `exec` can't change what gets checked or read below.
+        '[ -e "$1" ] || exit 2\n' +
+        'exec 3< "$1" || exit 2\n' +
+        'info=$(stat -L -c "%s %F" -- "/proc/self/fd/3") || exit 2\n' +
         'sz=${info%% *}\n' +
         'type=${info#* }\n' +
         '[ "$type" = "regular file" ] || exit 4\n' +
         '[ "$sz" -le "$2" ] || exit 4\n' +
-        'exec head -c "$2" -- "$1"\n',
+        'exec head -c "$2" <&3\n',
         "sh", path, String(MAX_CREDENTIALS_BYTES)]
 }
 
-function writeCredentialsArgs(path, jsonText) {
+function writeCredentialsArgs(path) {
     return ["sh", "-c",
         'umask 077\n' +
-        'tmp="$1.tmp.$$"\n' +
-        'printf %s "$2" > "$tmp" || { rm -f -- "$tmp"; exit 1; }\n' +
+        'dir=$(dirname -- "$1") || exit 1\n' +
+        'tmp=$(mktemp -- "$dir/.settings.XXXXXX") || exit 1\n' +
+        'cat > "$tmp" || { rm -f -- "$tmp"; exit 1; }\n' +
         'mv -f -- "$tmp" "$1"\n',
-        "sh", path, jsonText]
+        "sh", path]
 }
