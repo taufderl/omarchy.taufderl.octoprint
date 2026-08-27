@@ -277,37 +277,45 @@ var MAX_CREDENTIALS_BYTES = 16384
 
 function readCredentialsArgs(path) {
     return ["sh", "-c",
-        // "--" isn't valid before a bare redirection target (only
-        // before a *command's* arguments, which is why the mktemp/mv/
-        // dirname calls elsewhere in this file still use it) — a
-        // leading "-" in $1 just can't reach `<` as an option in the
-        // first place, so plain `< "$1"` is already unambiguous.
+        // $1 is untrusted: another local process could have replaced it
+        // with a FIFO (an ordinary open blocks until a writer shows up,
+        // hanging this script) or a symlink to some other file the user
+        // can read (an ordinary open follows it transparently, and a
+        // stat afterward only ever sees the target's genuine metadata —
+        // there's no way to tell after the fact that a symlink was
+        // involved at all).
         //
-        // The existence check up front isn't for the TOCTOU concern
-        // (that's what the fd-based stat below is for) — it's because
-        // `exec`, run with only a redirection and no command, is a
-        // POSIX "special built-in": a redirection error on it aborts
-        // the whole (non-interactive) shell immediately, bypassing any
-        // `|| exit 2` on the same line entirely. Checking first means
-        // the ordinary "no credentials file yet" case never reaches
-        // that exec at all; the fresh-install path depends on this
-        // exiting 2, not on the shell dying with some other status.
+        // `[ -f "$1" ] && [ ! -L "$1" ]` rejects both up front: `-f`
+        // requires it to resolve to a regular file, `! -L` requires $1
+        // itself not be a symlink, so together $1 must *be* a regular
+        // file rather than merely lead to one. Plain lstat/stat never
+        // open()s, so this check itself can't be stalled.
         //
-        // `stat -L` (not plain `stat`) on /proc/self/fd/3 matters: bare
-        // `stat` lstat()s the fd symlink itself ("64 symbolic link" —
-        // the length of the pseudo-target string), not the file fd 3
-        // actually has open. `-L` dereferences it, which for a magic
-        // /proc/self/fd link reports the live open file's real
-        // metadata — pinned to the fd, so a path swap after this
-        // `exec` can't change what gets checked or read below.
+        // $1 could still be swapped between that check and the read, so
+        // the read uses `dd iflag=nofollow,nonblock`: those map
+        // straight to O_NOFOLLOW and O_NONBLOCK on dd's own open(2), so
+        // a swap in that gap still can't be followed (ELOOP → dd fails,
+        // caught below) or hung on (a FIFO opened O_NONBLOCK with no
+        // writer returns EOF immediately instead of blocking).
+        // `bs=$(($2 + 1))` with `count=1` bounds the read to one block
+        // and, via the +1, makes an oversized source detectable from
+        // the output size alone — stating $1 itself afterward would
+        // just reopen it to the same races this is avoiding.
+        //
+        // The copy lands in our own mktemp'd file — not $1 — so the
+        // size check and the final read below both act on something
+        // this script alone created and named, with no path anyone
+        // else can race.
         '[ -e "$1" ] || exit 2\n' +
-        'exec 3< "$1" || exit 2\n' +
-        'info=$(stat -L -c "%s %F" -- "/proc/self/fd/3") || exit 2\n' +
-        'sz=${info%% *}\n' +
-        'type=${info#* }\n' +
-        '[ "$type" = "regular file" ] || exit 4\n' +
+        '[ -f "$1" ] && [ ! -L "$1" ] || exit 4\n' +
+        'umask 077\n' +
+        'dir=$(dirname -- "$1") || exit 4\n' +
+        'tmp=$(mktemp -- "$dir/.settings-read.XXXXXX") || exit 4\n' +
+        'trap \'rm -f -- "$tmp"\' EXIT\n' +
+        'dd if="$1" of="$tmp" iflag=nofollow,nonblock bs=$(($2 + 1)) count=1 2>/dev/null || exit 4\n' +
+        'sz=$(stat -c "%s" -- "$tmp") || exit 4\n' +
         '[ "$sz" -le "$2" ] || exit 4\n' +
-        'exec head -c "$2" <&3\n',
+        'cat -- "$tmp"\n',
         "sh", path, String(MAX_CREDENTIALS_BYTES)]
 }
 
