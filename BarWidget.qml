@@ -159,9 +159,10 @@ BarWidget {
         panelLoader.item.pollSeconds = Qt.binding(function() { return root.pollSeconds })
     }
 
-    // Pre-flight checks fetchStatus() used to do before ever touching the
-    // network now live here, since starting the two curl Processes is a
-    // QML-side operation (see startFetch()/jobProc/printerProc below).
+    // Validates host/apiKey before starting the two curl Processes (see
+    // startFetch()/jobProc/printerProc below) — starting them is a
+    // QML-side operation, so these checks live here rather than in
+    // Model.js.
     function refresh() {
         if (root.loading) return
         if (root.host === "") {

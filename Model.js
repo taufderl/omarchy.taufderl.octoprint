@@ -159,10 +159,9 @@ function curlArgs(url, apiKeyConfigPath) {
         "--", url]
 }
 
-// Turns one curl Process's (exitCode, stdout) into the same
-// {data|error, status} shape getJson()'s XHR callback used to produce.
-// 409 is returned as a status, not thrown away, so callers can
-// distinguish "printer not connected" from a real failure.
+// Turns one curl Process's (exitCode, stdout) into a {data|error,
+// status} result. 409 is returned as a status, not thrown away, so
+// callers can distinguish "printer not connected" from a real failure.
 function interpretCurlExit(exitCode, rawOutput) {
     if (exitCode === 63) return { data: null, error: "OctoPrint response too large", status: 0 }
     if (exitCode === 28) return { data: null, error: "OctoPrint request timed out", status: 0 }
@@ -189,8 +188,7 @@ function interpretCurlExit(exitCode, rawOutput) {
     }
 }
 
-// Combines the /api/job + /api/printer curl results the same way
-// fetchStatus() used to combine its two XHR callbacks: a 409 from either
+// Combines the /api/job + /api/printer curl results: a 409 from either
 // endpoint (printer not connected) is not fatal on its own.
 function combineResults(jobResult, printerResult) {
     var fatalError = null
@@ -240,27 +238,28 @@ function buildStatus(job, printer) {
 // Quickshell.Io's FileView, for two reasons a FileView bound directly to
 // the path can't address:
 //
-// - Read: FileView.text() materializes the whole file unconditionally.
-//   This is a plugin-owned file under a directory only this plugin
-//   writes to, but if it were ever replaced by something huge or a
-//   non-regular special file (FIFO, device), a plain read would happily
-//   buffer all of it or block on it. The read script opens the path
-//   exactly once (`exec 3<`) and stats *that file descriptor* (via
-//   /proc/self/fd/3, not the path again) before reading from it — a
-//   second stat-by-path, or a stat-then-reopen, would leave a window
-//   where the path could be swapped (symlink, replaced file) between the
-//   check and the read; stating the already-open fd can't be fooled that
-//   way, since it's pinned to whatever was actually opened.
-// - Write: FileView.setText() + a chmod 600 afterward (an earlier
-//   approach) leaves a real window where the just-written file exists at
-//   whatever the default umask produces before the deferred chmod lands.
-//   The write script sets `umask 077` before creating anything, and uses
-//   `mktemp` for the temp file — atomically created with an
-//   unpredictable name and mode 600 from the instant it exists, unlike a
-//   "$path.tmp.$$" name (the shell's own pid, guessable) that a local
-//   attacker could pre-place a symlink at. The atomic rename onto the
-//   final path carries that same mode with it, so there's no separate
-//   chmod step left to race either.
+// - Read: FileView.text() materializes the whole file unconditionally,
+//   with no bound and no check that it's actually a plain, regular
+//   file. This is a plugin-owned file under a directory only this
+//   plugin writes to, but another local process could still replace it
+//   with a FIFO (a plain read would block on it) or a symlink to
+//   something else the user can read (a plain read would follow it
+//   transparently). The read script rejects both by name first
+//   (`-f`/`! -L`, neither of which ever open()s), then reads through
+//   `dd iflag=nofollow,nonblock` — carrying that same rejection into
+//   the open() itself, so even a swap between the check and the read
+//   can't be followed or hung on — into its own mktemp'd file, bounded
+//   to MAX_CREDENTIALS_BYTES; see readCredentialsArgs() below for the
+//   full reasoning.
+// - Write: FileView.setText() plus a separate chmod 600 would leave a
+//   window where the just-written file exists at whatever the default
+//   umask produces. The write script sets `umask 077` before creating
+//   anything and uses `mktemp` for the temp file — atomically created
+//   with an unpredictable name (a predictable one, e.g. embedding the
+//   shell's own pid, would let a local attacker pre-place a symlink at
+//   it) and mode 600 from the instant it exists. The atomic rename onto
+//   the final path carries that same mode with it, so there's no
+//   separate chmod step left to race either.
 //
 // The path is its own argv element rather than interpolated into the
 // script text, so arbitrary bytes in it — quotes, `$()`, backticks,
